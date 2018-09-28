@@ -29,6 +29,36 @@ const (
 	ShutdownSent
 )
 
+const (
+	rtoInitial     = 3 * time.Second
+	rtoMin         = time.Second
+	rtoMax         = 60 * time.Second
+	rtoAlpha       = 1 / 8
+	rtoBeta        = 1 / 4
+	t1InitMaxRetry = 10
+)
+
+func durationMin(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func durationMax(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func durationAbs(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
+}
+
 func (a AssociationState) String() string {
 	switch a {
 	case Open:
@@ -106,6 +136,14 @@ type Association struct {
 
 	isInitiating bool
 	notifier     func(AssociationState)
+
+	srtt         time.Duration // Smoothed RTT
+	rttvar       time.Duration // RTT Variation
+	firstRTT     bool
+	rto          time.Duration
+	t1InitCancel chan bool
+
+	maxInitRtx uint32
 
 	// TODO are these better as channels
 	// Put a blocking goroutine in port-receive (vs callbacks)
@@ -197,6 +235,8 @@ func (a *Association) HandleOutbound(raw []byte, streamIdentifier uint16, payloa
 
 // Close ends the SCTP Association and cleans up any state
 func (a *Association) Close() error {
+	// Cancel pending T1 timers
+	a.t1InitCancel <- true
 	return nil
 }
 
@@ -222,6 +262,9 @@ func NewAssocation(outboundHandler func([]byte), dataHandler func([]byte, uint16
 		state:                     Open,
 		notifier:                  notifier,
 		peerCumulativeTSNAckPoint: tsn - 1,
+		firstRTT:                  true,
+		rto:                       rtoInitial,
+		t1InitCancel:              make(chan bool),
 	}
 }
 
@@ -288,13 +331,36 @@ func (a *Association) setState(state AssociationState) {
 	}
 }
 
+func (a *Association) startT1Timer(f func()) {
+	f()
+	go func() {
+		timeout := make(chan bool)
+		for i := 0; i < t1InitMaxRetry; i++ {
+			go func() {
+				<-time.After(a.rto)
+				timeout <- true
+			}()
+
+			select {
+			case <-timeout:
+				f()
+			case <-a.t1InitCancel:
+				return
+			}
+		}
+	}()
+}
+
 // Connect initiates the SCTP connection
 func (a *Association) Connect() {
 	if a.isInitiating {
-		err := a.send(a.createInit())
-		if err != nil {
-			fmt.Printf("Failed to send init: %v", err)
-		}
+		a.startT1Timer(func() {
+			err := a.send(a.createInit())
+			if err != nil {
+				fmt.Printf("Failed to send init: %v", err)
+			}
+		})
+
 		a.setState(CookieWait)
 	}
 }
@@ -436,6 +502,38 @@ func (a *Association) handleData(d *chunkPayloadData) *packet {
 	return outbound
 }
 
+func (a *Association) calculateRTO(r time.Duration) {
+	// The computation and management of RTO in SCTP follow closely how TCP
+	// manages its retransmission timer.  To compute the current RTO, an
+	// endpoint maintains two state variables per destination transport
+	// address: SRTT (smoothed round-trip time) and RTTVAR (round-trip time
+	// variation).
+
+	if a.firstRTT {
+		// C2
+		a.rttvar = r / 2
+		a.srtt = r
+		a.firstRTT = false
+		a.rto = a.srtt + 4*a.rttvar
+	} else {
+		// C3
+		a.rttvar = (1-rtoBeta)*a.rttvar + rtoBeta*durationAbs(a.srtt-r)
+		a.srtt = (1-rtoAlpha)*a.srtt + rtoAlpha*r
+		a.rto = a.srtt + 4*a.rttvar
+	}
+
+	// C6
+	// Whenever RTO is computed, if it is less than RTO.Min seconds
+	// then it is rounded up to RTO.Min seconds.  The reason for this
+	// rule is that RTOs that do not have a high minimum value are
+	// susceptible to unnecessary timeouts [ALLMAN99].
+	a.rto = durationMin(a.rto, rtoMin)
+
+	// C7 A maximum value may be placed on RTO provided it is at least
+	// RTO.max seconds.
+	a.rto = durationMax(a.rto, rtoMax)
+}
+
 func (a *Association) handleSack(d *chunkSelectiveAck) ([]*packet, error) {
 	// i) If Cumulative TSN Ack is less than the Cumulative TSN Ack
 	// Point, then drop the SACK.  Since Cumulative TSN Ack is
@@ -523,10 +621,17 @@ func (a *Association) handleChunk(p *packet, c chunk) error {
 			if err != nil {
 				return err
 			}
-			err = a.send(r)
-			if err != nil {
-				return err
-			}
+			// Cancel T1 init timer
+			a.t1InitCancel <- true
+
+			// Start Cookie Echo timer
+			a.startT1Timer(func() {
+				err = a.send(r)
+				if err != nil {
+					fmt.Printf("Failed to send init: %v", err)
+				}
+			})
+
 			a.setState(CookieEchoed)
 			return nil
 		default:
@@ -575,6 +680,7 @@ func (a *Association) handleChunk(p *packet, c chunk) error {
 		switch a.state {
 		case CookieEchoed:
 			a.setState(Established)
+			a.t1InitCancel <- true
 			return nil
 		default:
 			return errors.Errorf("TODO Handle Init acks when in state %s", a.state.String())

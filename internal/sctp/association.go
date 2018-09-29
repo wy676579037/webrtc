@@ -236,7 +236,7 @@ func (a *Association) HandleOutbound(raw []byte, streamIdentifier uint16, payloa
 // Close ends the SCTP Association and cleans up any state
 func (a *Association) Close() error {
 	// Cancel pending T1 timers
-	a.t1InitCancel <- true
+	close(a.t1InitCancel)
 	return nil
 }
 
@@ -335,7 +335,8 @@ func (a *Association) startT1Timer(f func()) {
 	f()
 	go func() {
 		timeout := make(chan bool)
-		for i := 0; i < t1InitMaxRetry; i++ {
+		// t1InitMaxRetry-1 because we've already tried once above
+		for i := 0; i < t1InitMaxRetry-1; i++ {
 			go func() {
 				<-time.After(a.rto)
 				timeout <- true
@@ -345,9 +346,13 @@ func (a *Association) startT1Timer(f func()) {
 			case <-timeout:
 				f()
 			case <-a.t1InitCancel:
+				fmt.Println("Cancelling T1 timer")
 				return
 			}
 		}
+		fmt.Println("Failed sending INIT or COOKIE-ECHO, giving up!")
+		// TODO: Handle t1 timer failure
+		//a.setState(Something)
 	}()
 }
 
@@ -626,6 +631,7 @@ func (a *Association) handleChunk(p *packet, c chunk) error {
 
 			// Start Cookie Echo timer
 			a.startT1Timer(func() {
+				fmt.Printf("Attempt to send cookie echo!")
 				err = a.send(r)
 				if err != nil {
 					fmt.Printf("Failed to send init: %v", err)

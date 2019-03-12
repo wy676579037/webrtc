@@ -4,6 +4,7 @@ package webrtc
 
 import (
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/pions/rtcp"
@@ -114,7 +115,7 @@ func (r *RTPSender) Stop() error {
 func (r *RTPSender) Read(b []byte) (n int, err error) {
 	select {
 	case <-r.stopCalled:
-		return 0, fmt.Errorf("RTPSender has been stopped")
+		return 0, io.EOF
 	case <-r.sendCalled:
 		return r.rtcpReadStream.Read(b)
 	}

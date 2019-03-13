@@ -407,10 +407,6 @@ func (pc *PeerConnection) GetConfiguration() Configuration {
 	return pc.configuration
 }
 
-// ------------------------------------------------------------------------
-// --- FIXME - BELOW CODE NEEDS REVIEW/CLEANUP
-// ------------------------------------------------------------------------
-
 // CreateOffer starts the PeerConnection and generates the localDescription
 func (pc *PeerConnection) CreateOffer(options *OfferOptions) (SessionDescription, error) {
 	useIdentity := pc.idpLoginURL != nil
@@ -436,34 +432,38 @@ func (pc *PeerConnection) CreateOffer(options *OfferOptions) (SessionDescription
 		return SessionDescription{}, err
 	}
 
-	bundleValue := "BUNDLE"
-
-	if pc.addRTPMediaSection(d, RTPCodecTypeAudio, "audio", iceParams, RTPTransceiverDirectionSendrecv, candidates, sdp.ConnectionRoleActpass) {
-		bundleValue += " audio"
-	}
-	if pc.addRTPMediaSection(d, RTPCodecTypeVideo, "video", iceParams, RTPTransceiverDirectionSendrecv, candidates, sdp.ConnectionRoleActpass) {
-		bundleValue += " video"
+	for _, t := range pc.GetTransceivers() {
 	}
 
-	pc.addDataMediaSection(d, "data", iceParams, candidates, sdp.ConnectionRoleActpass)
-	d = d.WithValueAttribute(sdp.AttrKeyGroup, bundleValue+" data")
+	// return SessionDescription{}, nil
+	// bundleValue := "BUNDLE"
 
-	for _, m := range d.MediaDescriptions {
-		m.WithPropertyAttribute("setup:actpass")
-	}
+	// if pc.addRTPMediaSection(d, RTPCodecTypeAudio, "audio", iceParams, RTPTransceiverDirectionSendrecv, candidates, sdp.ConnectionRoleActpass) {
+	// 	bundleValue += " audio"
+	// }
+	// if pc.addRTPMediaSection(d, RTPCodecTypeVideo, "video", iceParams, RTPTransceiverDirectionSendrecv, candidates, sdp.ConnectionRoleActpass) {
+	// 	bundleValue += " video"
+	// }
 
-	sdp, err := d.Marshal()
-	if err != nil {
-		return SessionDescription{}, err
-	}
+	// pc.addDataMediaSection(d, "data", iceParams, candidates, sdp.ConnectionRoleActpass)
+	// d = d.WithValueAttribute(sdp.AttrKeyGroup, bundleValue+" data")
 
-	desc := SessionDescription{
-		Type:   SDPTypeOffer,
-		SDP:    string(sdp),
-		parsed: d,
-	}
-	pc.lastOffer = desc.SDP
-	return desc, nil
+	// for _, m := range d.MediaDescriptions {
+	// 	m.WithPropertyAttribute("setup:actpass")
+	// }
+
+	// sdp, err := d.Marshal()
+	// if err != nil {
+	// 	return SessionDescription{}, err
+	// }
+
+	// desc := SessionDescription{
+	// 	Type:   SDPTypeOffer,
+	// 	SDP:    string(sdp),
+	// 	parsed: d,
+	// }
+	// pc.lastOffer = desc.SDP
+	// return desc, nil
 }
 
 func (pc *PeerConnection) createICEGatherer() (*ICEGatherer, error) {
@@ -528,70 +528,72 @@ func (pc *PeerConnection) CreateAnswer(options *AnswerOptions) (SessionDescripti
 		return SessionDescription{}, &rtcerr.InvalidStateError{Err: ErrConnectionClosed}
 	}
 
-	iceParams, err := pc.iceGatherer.GetLocalParameters()
-	if err != nil {
-		return SessionDescription{}, err
-	}
+	return SessionDescription{}, nil
 
-	candidates, err := pc.iceGatherer.GetLocalCandidates()
-	if err != nil {
-		return SessionDescription{}, err
-	}
+	// iceParams, err := pc.iceGatherer.GetLocalParameters()
+	// if err != nil {
+	// 	return SessionDescription{}, err
+	// }
 
-	d := sdp.NewJSEPSessionDescription(useIdentity)
-	pc.addFingerprint(d)
+	// candidates, err := pc.iceGatherer.GetLocalCandidates()
+	// if err != nil {
+	// 	return SessionDescription{}, err
+	// }
 
-	bundleValue := "BUNDLE"
-	for _, remoteMedia := range pc.RemoteDescription().parsed.MediaDescriptions {
-		// TODO @trivigy better SDP parser
-		var peerDirection RTPTransceiverDirection
-		midValue := ""
-		for _, a := range remoteMedia.Attributes {
-			switch {
-			case strings.HasPrefix(*a.String(), "mid"):
-				midValue = (*a.String())[len("mid:"):]
-			case strings.HasPrefix(*a.String(), "sendrecv"):
-				peerDirection = RTPTransceiverDirectionSendrecv
-			case strings.HasPrefix(*a.String(), "sendonly"):
-				peerDirection = RTPTransceiverDirectionSendonly
-			case strings.HasPrefix(*a.String(), "recvonly"):
-				peerDirection = RTPTransceiverDirectionRecvonly
-			}
-		}
+	// d := sdp.NewJSEPSessionDescription(useIdentity)
+	// pc.addFingerprint(d)
 
-		appendBundle := func() {
-			bundleValue += " " + midValue
-		}
+	// bundleValue := "BUNDLE"
+	// for _, remoteMedia := range pc.RemoteDescription().parsed.MediaDescriptions {
+	// 	// TODO @trivigy better SDP parser
+	// 	var peerDirection RTPTransceiverDirection
+	// 	midValue := ""
+	// 	for _, a := range remoteMedia.Attributes {
+	// 		switch {
+	// 		case strings.HasPrefix(*a.String(), "mid"):
+	// 			midValue = (*a.String())[len("mid:"):]
+	// 		case strings.HasPrefix(*a.String(), "sendrecv"):
+	// 			peerDirection = RTPTransceiverDirectionSendrecv
+	// 		case strings.HasPrefix(*a.String(), "sendonly"):
+	// 			peerDirection = RTPTransceiverDirectionSendonly
+	// 		case strings.HasPrefix(*a.String(), "recvonly"):
+	// 			peerDirection = RTPTransceiverDirectionRecvonly
+	// 		}
+	// 	}
 
-		switch {
-		case strings.HasPrefix(*remoteMedia.MediaName.String(), "audio"):
-			if pc.addRTPMediaSection(d, RTPCodecTypeAudio, midValue, iceParams, peerDirection, candidates, sdp.ConnectionRoleActive) {
-				appendBundle()
-			}
-		case strings.HasPrefix(*remoteMedia.MediaName.String(), "video"):
-			if pc.addRTPMediaSection(d, RTPCodecTypeVideo, midValue, iceParams, peerDirection, candidates, sdp.ConnectionRoleActive) {
-				appendBundle()
-			}
-		case strings.HasPrefix(*remoteMedia.MediaName.String(), "application"):
-			pc.addDataMediaSection(d, midValue, iceParams, candidates, sdp.ConnectionRoleActive)
-			appendBundle()
-		}
-	}
+	// 	appendBundle := func() {
+	// 		bundleValue += " " + midValue
+	// 	}
 
-	d = d.WithValueAttribute(sdp.AttrKeyGroup, bundleValue)
+	// 	switch {
+	// 	case strings.HasPrefix(*remoteMedia.MediaName.String(), "audio"):
+	// 		if pc.addRTPMediaSection(d, RTPCodecTypeAudio, midValue, iceParams, peerDirection, candidates, sdp.ConnectionRoleActive) {
+	// 			appendBundle()
+	// 		}
+	// 	case strings.HasPrefix(*remoteMedia.MediaName.String(), "video"):
+	// 		if pc.addRTPMediaSection(d, RTPCodecTypeVideo, midValue, iceParams, peerDirection, candidates, sdp.ConnectionRoleActive) {
+	// 			appendBundle()
+	// 		}
+	// 	case strings.HasPrefix(*remoteMedia.MediaName.String(), "application"):
+	// 		pc.addDataMediaSection(d, midValue, iceParams, candidates, sdp.ConnectionRoleActive)
+	// 		appendBundle()
+	// 	}
+	// }
 
-	sdp, err := d.Marshal()
-	if err != nil {
-		return SessionDescription{}, err
-	}
+	// d = d.WithValueAttribute(sdp.AttrKeyGroup, bundleValue)
 
-	desc := SessionDescription{
-		Type:   SDPTypeAnswer,
-		SDP:    string(sdp),
-		parsed: d,
-	}
-	pc.lastAnswer = desc.SDP
-	return desc, nil
+	// sdp, err := d.Marshal()
+	// if err != nil {
+	// 	return SessionDescription{}, err
+	// }
+
+	// desc := SessionDescription{
+	// 	Type:   SDPTypeAnswer,
+	// 	SDP:    string(sdp),
+	// 	parsed: d,
+	// }
+	// pc.lastAnswer = desc.SDP
+	// return desc, nil
 }
 
 // 4.4.1.6 Set the SessionDescription
@@ -1165,9 +1167,17 @@ func (pc *PeerConnection) AddTrack(track *Track) (*RTPSender, error) {
 // 	panic("not implemented yet") // FIXME NOT-IMPLEMENTED nolint
 // }
 
-// func (pc *PeerConnection) AddTransceiver() RTPTransceiver {
-// 	panic("not implemented yet") // FIXME NOT-IMPLEMENTED nolint
-// }
+// AddTransceiver Create a new RTCRtpTransceiver and add it to the set of transceivers.
+func (pc *PeerConnection) AddTransceiver(trackOrKind RTPCodecType, init ...RtpTransceiverInit) (*RTPTransceiver, error) {
+	direction := RTPTransceiverDirectionSendrecv
+	if len(init) > 1 {
+		return nil, fmt.Errorf("AddTransceiver only accepts one RtpTransceiverInit")
+	} else if len(init) == 1 {
+		direction = init[0].Direction
+	}
+
+	return &RTPTransceiver{}, nil
+}
 
 // CreateDataChannel creates a new DataChannel object with the given label
 // and optional DataChannelInit used to configure properties of the

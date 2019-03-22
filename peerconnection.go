@@ -35,7 +35,7 @@ type PeerConnection struct {
 	currentRemoteDescription *SessionDescription
 	pendingRemoteDescription *SessionDescription
 	signalingState           SignalingState
-	iceGatheringState        ICEGatheringState // FIXME NOT-USED
+	iceGatheringState        ICEGatheringState
 	iceConnectionState       ICEConnectionState
 	connectionState          PeerConnectionState
 
@@ -53,16 +53,16 @@ type PeerConnection struct {
 	dataChannels map[uint16]*DataChannel
 
 	// OnNegotiationNeeded        func() // FIXME NOT-USED
-	// OnICECandidate             func() // FIXME NOT-USED
 	// OnICECandidateError        func() // FIXME NOT-USED
 
-	// OnICEGatheringStateChange  func() // FIXME NOT-USED
 	// OnConnectionStateChange    func() // FIXME NOT-USED
 
 	onSignalingStateChangeHandler     func(SignalingState)
 	onICEConnectionStateChangeHandler func(ICEConnectionState)
 	onTrackHandler                    func(*Track, *RTPReceiver)
 	onDataChannelHandler              func(*DataChannel)
+	onICECandidateHandler             func(*ICECandidate)
+	onICEGatheringStateChangeHandler  func(ICEGatheringState)
 
 	iceGatherer   *ICEGatherer
 	iceTransport  *ICETransport
@@ -236,6 +236,64 @@ func (pc *PeerConnection) OnDataChannel(f func(*DataChannel)) {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
 	pc.onDataChannelHandler = f
+}
+
+// OnICECandidate sets an event handler which is invoked when a new ICE
+// candidate is found.
+// BUG: trickle ICE is not supported so this event is triggered immediately when
+// a new PeerConnection is created. Typically, you only need to use this method
+// if you want API compatibility with the JavaScript/Wasm bindings.
+func (pc *PeerConnection) OnICECandidate(f func(*ICECandidate)) {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	pc.onICECandidateHandler = f
+}
+
+// OnICEGatheringStateChange sets an event handler which is invoked when the
+// ICE candidate gathering state has changed.
+// BUG: trickle ICE is not supported so this event is triggered immediately when
+// a new PeerConnection is created. Typically, you only need to use this method
+// if you want API compatibility with the JavaScript/Wasm bindings.
+func (pc *PeerConnection) OnICEGatheringStateChange(f func(ICEGatheringState)) {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	pc.onICEGatheringStateChangeHandler = f
+}
+
+// signalICECandidateGatheringComplete should be called after ICE candidate
+// gathering is complete. It triggers the appropriate event handlers in order to
+// emulate a trickle ICE process.
+func (pc *PeerConnection) signalICECandidateGatheringComplete() error {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+
+	// Call onICECandidateHandler for all candidates.
+	if pc.onICECandidateHandler != nil {
+		candidates, err := pc.iceGatherer.GetLocalCandidates()
+		if err != nil {
+			return err
+		}
+		for i := range candidates {
+			pc.onICECandidateHandler(&candidates[i])
+		}
+		// Call the handler one last time with nil. This is a signal that candidate
+		// gathering is complete.
+		pc.onICECandidateHandler(nil)
+	}
+
+	// Also trigger the onICEGatheringStateChangeHandler
+	if pc.onICEGatheringStateChangeHandler != nil {
+		// Note: Gathering is already done at this point, but some clients might
+		// still expect a certain state transition. We first trigger the event
+		// handler with the "gathering" state and then trigger it with the
+		// "complete" state.
+		pc.onICEGatheringStateChangeHandler(ICEGatheringStateGathering)
+		pc.onICEGatheringStateChangeHandler(ICEGatheringStateComplete)
+	}
+
+	pc.iceGatheringState = ICEGatheringStateComplete
+
+	return nil
 }
 
 // OnTrack sets an event handler which is called when remote track
@@ -687,7 +745,21 @@ func (pc *PeerConnection) SetLocalDescription(desc SessionDescription) error {
 	if err := desc.parsed.Unmarshal([]byte(desc.SDP)); err != nil {
 		return err
 	}
-	return pc.setDescription(&desc, stateChangeOpSetLocal)
+	if err := pc.setDescription(&desc, stateChangeOpSetLocal); err != nil {
+		return err
+	}
+
+	// Call the appropriate event handlers to signal that ICE candidate gathering
+	// is complete. In reality it completed a while ago, but triggering these
+	// events helps maintain API compatibility with the JavaScript/Wasm bindings.
+	go func() {
+		// Unfortunately, we need this call to be inside a goroutine to prevent
+		// deadlocks. This means we don't have a way to communicate errors back to
+		// the caller.
+		_ = pc.signalICECandidateGatheringComplete()
+	}()
+
+	return nil
 }
 
 // LocalDescription returns pendingLocalDescription if it is not null and
@@ -1510,7 +1582,6 @@ func (pc *PeerConnection) SignalingState() SignalingState {
 
 // ICEGatheringState attribute returns the ICE gathering state of the
 // PeerConnection instance.
-// FIXME NOT-USED
 func (pc *PeerConnection) ICEGatheringState() ICEGatheringState {
 	return pc.iceGatheringState
 }

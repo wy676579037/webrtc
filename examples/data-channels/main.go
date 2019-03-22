@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/pions/webrtc"
-
 	"github.com/pions/webrtc/examples/internal/signal"
 )
 
@@ -26,6 +25,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	fmt.Println("Created PeerConnection")
 
 	// Set the handler for ICE connection state
 	// This will notify you when the peer has connected/disconnected

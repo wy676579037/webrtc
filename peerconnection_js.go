@@ -22,7 +22,6 @@ type PeerConnection struct {
 	onDataChannelHandler             *js.Func
 	onICEConectionStateChangeHandler *js.Func
 	onICECandidateHandler            *js.Func
-	onNegotiationNeededHandler       *js.Func
 }
 
 // NewPeerConnection creates a peerconnection with the default
@@ -292,20 +291,6 @@ func (pc *PeerConnection) OnICECandidate(f func(candidate *ICECandidate)) {
 	pc.underlying.Set("onicecandidate", onICECandidateHandler)
 }
 
-// TODO(albrow): This function doesn't exist in the Go implementation.
-func (pc *PeerConnection) OnNegotiationNeeded(f func()) {
-	if pc.onNegotiationNeededHandler != nil {
-		oldHandler := pc.onNegotiationNeededHandler
-		defer oldHandler.Release()
-	}
-	onNegotiationNeededHandler := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-		go f()
-		return js.Undefined()
-	})
-	pc.onNegotiationNeededHandler = &onNegotiationNeededHandler
-	pc.underlying.Set("onnegotiationneeded", onNegotiationNeededHandler)
-}
-
 // // GetSenders returns the RTPSender that are currently attached to this PeerConnection
 // func (pc *PeerConnection) GetSenders() []*RTPSender {
 // }
@@ -381,9 +366,6 @@ func (pc *PeerConnection) Close() (err error) {
 	}
 	if pc.onICECandidateHandler != nil {
 		pc.onICECandidateHandler.Release()
-	}
-	if pc.onNegotiationNeededHandler != nil {
-		pc.onNegotiationNeededHandler.Release()
 	}
 
 	return nil

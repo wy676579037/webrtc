@@ -62,7 +62,7 @@ type PeerConnection struct {
 	onTrackHandler                    func(*Track, *RTPReceiver)
 	onDataChannelHandler              func(*DataChannel)
 	onICECandidateHandler             func(*ICECandidate)
-	onICEGatheringStateChangeHandler  func(ICEGatheringState)
+	onICEGatheringStateChangeHandler  func()
 
 	iceGatherer   *ICEGatherer
 	iceTransport  *ICETransport
@@ -254,7 +254,7 @@ func (pc *PeerConnection) OnICECandidate(f func(*ICECandidate)) {
 // BUG: trickle ICE is not supported so this event is triggered immediately when
 // SetLocalDescription is called. Typically, you only need to use this method
 // if you want API compatibility with the JavaScript/Wasm bindings.
-func (pc *PeerConnection) OnICEGatheringStateChange(f func(ICEGatheringState)) {
+func (pc *PeerConnection) OnICEGatheringStateChange(f func()) {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
 	pc.onICEGatheringStateChangeHandler = f
@@ -281,17 +281,14 @@ func (pc *PeerConnection) signalICECandidateGatheringComplete() error {
 		pc.onICECandidateHandler(nil)
 	}
 
+	pc.iceGatheringState = ICEGatheringStateComplete
+
 	// Also trigger the onICEGatheringStateChangeHandler
 	if pc.onICEGatheringStateChangeHandler != nil {
 		// Note: Gathering is already done at this point, but some clients might
-		// still expect a certain state transition. We first trigger the event
-		// handler with the "gathering" state and then trigger it with the
-		// "complete" state.
-		pc.onICEGatheringStateChangeHandler(ICEGatheringStateGathering)
-		pc.onICEGatheringStateChangeHandler(ICEGatheringStateComplete)
+		// still expect the state change handler to be triggered.
+		pc.onICEGatheringStateChangeHandler()
 	}
-
-	pc.iceGatheringState = ICEGatheringStateComplete
 
 	return nil
 }

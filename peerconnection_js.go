@@ -22,6 +22,7 @@ type PeerConnection struct {
 	onDataChannelHandler             *js.Func
 	onICEConectionStateChangeHandler *js.Func
 	onICECandidateHandler            *js.Func
+	onICEGatheringStateChangeHandler *js.Func
 }
 
 // NewPeerConnection creates a peerconnection with the default
@@ -291,6 +292,21 @@ func (pc *PeerConnection) OnICECandidate(f func(candidate *ICECandidate)) {
 	pc.underlying.Set("onicecandidate", onICECandidateHandler)
 }
 
+// OnICEGatheringStateChange sets an event handler which is invoked when the
+// ICE candidate gathering state has changed.
+func (pc *PeerConnection) OnICEGatheringStateChange(f func()) {
+	if pc.onICEGatheringStateChangeHandler != nil {
+		oldHandler := pc.onICEGatheringStateChangeHandler
+		defer oldHandler.Release()
+	}
+	onICEGatheringStateChangeHandler := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		go f()
+		return js.Undefined()
+	})
+	pc.onICEGatheringStateChangeHandler = &onICEGatheringStateChangeHandler
+	pc.underlying.Set("onicegatheringstatechange", onICEGatheringStateChangeHandler)
+}
+
 // // GetSenders returns the RTPSender that are currently attached to this PeerConnection
 // func (pc *PeerConnection) GetSenders() []*RTPSender {
 // }
@@ -366,6 +382,9 @@ func (pc *PeerConnection) Close() (err error) {
 	}
 	if pc.onICECandidateHandler != nil {
 		pc.onICECandidateHandler.Release()
+	}
+	if pc.onICEGatheringStateChangeHandler != nil {
+		pc.onICEGatheringStateChangeHandler.Release()
 	}
 
 	return nil

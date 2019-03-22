@@ -241,7 +241,7 @@ func (pc *PeerConnection) OnDataChannel(f func(*DataChannel)) {
 // OnICECandidate sets an event handler which is invoked when a new ICE
 // candidate is found.
 // BUG: trickle ICE is not supported so this event is triggered immediately when
-// a new PeerConnection is created. Typically, you only need to use this method
+// SetLocalDescription is called. Typically, you only need to use this method
 // if you want API compatibility with the JavaScript/Wasm bindings.
 func (pc *PeerConnection) OnICECandidate(f func(*ICECandidate)) {
 	pc.mu.Lock()
@@ -252,7 +252,7 @@ func (pc *PeerConnection) OnICECandidate(f func(*ICECandidate)) {
 // OnICEGatheringStateChange sets an event handler which is invoked when the
 // ICE candidate gathering state has changed.
 // BUG: trickle ICE is not supported so this event is triggered immediately when
-// a new PeerConnection is created. Typically, you only need to use this method
+// SetLocalDescription is called. Typically, you only need to use this method
 // if you want API compatibility with the JavaScript/Wasm bindings.
 func (pc *PeerConnection) OnICEGatheringStateChange(f func(ICEGatheringState)) {
 	pc.mu.Lock()

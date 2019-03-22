@@ -1262,6 +1262,9 @@ func (pc *PeerConnection) SendRTCP(pkt rtcp.Packet) error {
 	}
 
 	if _, err := writeStream.Write(raw); err != nil {
+		if err == ice.ErrNoCandidatePairs {
+			return nil
+		}
 		return fmt.Errorf("SendRTCP failed to write: %v", err)
 	}
 	return nil

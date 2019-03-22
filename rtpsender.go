@@ -9,6 +9,7 @@ import (
 	"github.com/pions/rtcp"
 	"github.com/pions/rtp"
 	"github.com/pions/srtp"
+	"github.com/pions/webrtc/internal/ice"
 )
 
 // RTPSender allows an application to control how a given Track is encoded and transmitted to a remote peer
@@ -149,7 +150,11 @@ func (r *RTPSender) sendRTP(header *rtp.Header, payload []byte) (int, error) {
 			return 0, err
 		}
 
-		return writeStream.WriteRTP(header, payload)
+		n, err := writeStream.WriteRTP(header, payload)
+		if err == ice.ErrNoCandidatePairs {
+			err = nil
+		}
+		return n, err
 	}
 }
 
